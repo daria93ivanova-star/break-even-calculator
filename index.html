@@ -1,0 +1,563 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Точка безубыточности — один товар / ассортимент (исправлено)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <style>
+    .card { border:1px solid rgb(226 232 240); border-radius:1rem; background:#fff; padding:1rem; box-shadow:0 1px 2px rgba(0,0,0,.05); }
+    .kpi  { border:1px solid rgb(226 232 240); border-radius:1rem; background:#fff; padding:1rem; }
+    .muted{ color: rgb(100 116 139); }
+    .row  { display:grid; grid-template-columns: 1.1fr 1fr; gap:.6rem; align-items:center; }
+    .row input, .row select { width:100% }
+    .tbl  { width:100%; border-collapse:collapse; }
+    .tbl th, .tbl td { border:1px solid rgb(226 232 240); padding:.5rem; white-space:nowrap; }
+    .pill { border-radius:999px; padding:.2rem .6rem; font-size:.75rem; border:1px solid rgb(226 232 240); background:#fff; }
+    .pos  { background:#ecfdf5; color:#065f46; border-color:#a7f3d0 }
+    .neg  { background:#fef2f2; color:#991b1b; border-color:#fecaca }
+    .btn  { border:1px solid rgb(226 232 240); border-radius:0.75rem; padding:.45rem .8rem; background:#fff; }
+    .btn:hover{ background:#f8fafc }
+    .hiddenSection { display:none; }
+  </style>
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-800">
+  <div class="max-w-7xl mx-auto px-4 py-6 space-y-4">
+
+    <header class="space-y-1">
+      <h1 class="text-3xl font-bold">Калькулятор точки безубыточности</h1>
+      <p class="muted">Работает для одного товара и ассортимента. Считает ТБ, прибыль, маржинальность и цену/множитель под цель.</p>
+    </header>
+
+    <!-- Фильтры -->
+    <section class="grid grid-cols-1 md:grid-cols-3 gap-3">
+      <div class="card">
+        <div class="row"><label class="text-sm">Валюта</label>
+          <select id="cur" class="rounded-xl border px-3 py-2">
+            <option>RUB</option><option>USD</option><option>EUR</option><option>CAD</option>
+          </select>
+        </div>
+      </div>
+      <div class="card">
+        <div class="row"><label class="text-sm">Режим</label>
+          <select id="mode" class="rounded-xl border px-3 py-2">
+            <option value="single">Один товар</option>
+            <option value="multi">Ассортимент (несколько SKU)</option>
+          </select>
+        </div>
+      </div>
+      <div class="card">
+        <div class="row"><label class="text-sm">Постоянные расходы (в месяц)</label>
+          <input id="fixed" inputmode="decimal" class="rounded-xl border px-3 py-2" value="150000">
+        </div>
+        <p class="muted text-xs mt-2">Постоянные издержки: не зависят от количества проданных единиц (аренда, оклады, лицензии, связь и пр.).</p>
+      </div>
+    </section>
+
+    <!-- ОДИН ТОВАР -->
+    <section id="singleSection" class="card">
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        <div class="card">
+          <div class="row"><label class="text-sm">Цена за единицу</label>
+            <input id="priceSingle" inputmode="decimal" class="rounded-xl border px-3 py-2" value="1200">
+          </div>
+        </div>
+        <div class="card">
+          <div class="text-sm font-semibold">Переменные затраты на единицу</div>
+          <p class="muted text-xs mt-1">Переменные затраты: зависят от объёма — материалы, упаковка, бонусная часть продаж, доставка, комиссия. Можно <b>ввести вручную</b> итог на единицу или <b>рассчитать</b> по статьям.</p>
+          <div class="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">
+            <div>
+              <label class="text-sm"><input type="radio" name="vcMode" id="vcManual" checked> Ввести вручную</label>
+              <input id="vcManualValue" inputmode="decimal" class="rounded-xl border px-3 py-2 w-full mt-1" value="450">
+            </div>
+            <div>
+              <label class="text-sm"><input type="radio" name="vcMode" id="vcTable"> Рассчитать по статьям</label><br>
+              <button id="openVCTable" type="button" class="btn mt-1" onclick="openVCTab()">Открыть таблицу статей</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- АССОРТИМЕНТ -->
+    <section id="multiSection" class="card hiddenSection">
+      <div class="text-sm font-semibold">Ассортимент (несколько SKU)</div>
+      <p class="muted text-xs mt-1">У каждого SKU своя цена и переменные затраты. «Доля» — доля SKU в общем объёме (в штуках). Сумма долей ≈ 100%.</p>
+      <div class="overflow-x-auto">
+        <table class="tbl mt-2">
+          <thead>
+            <tr>
+              <th>Название SKU</th>
+              <th>Цена</th>
+              <th>Перем. затраты фикс/ед.</th>
+              <th>Перем. затраты % от цены</th>
+              <th>Доля, %</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="skuBody"></tbody>
+          <tfoot>
+            <tr>
+              <td colspan="6">
+                <button id="addSku" type="button" class="btn" onclick="addSkuRow()">+ Добавить SKU</button>
+                <span class="pill">Сумма долей: <span id="mixShareSum">—</span></span>
+              </td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
+        <div class="kpi"><div class="text-xs muted">Средневзв. цена</div><div id="wAvgPrice" class="font-semibold text-lg">—</div></div>
+        <div class="kpi"><div class="text-xs muted">Средневзв. перем. затраты</div><div id="wAvgVC" class="font-semibold text-lg">—</div></div>
+        <div class="kpi"><div class="text-xs muted">Средневзв. вклад</div><div id="wAvgContr" class="font-semibold text-lg">—</div></div>
+      </div>
+    </section>
+
+    <!-- МОДАЛКА: таблица статей VC -->
+    <dialog id="vcDialog" style="max-width:900px;width:90%;border:none;border-radius:1rem;padding:0;box-shadow:0 10px 30px rgba(0,0,0,.2)">
+      <div class="card" style="border:none; box-shadow:none;">
+        <div class="flex items-center justify-between">
+          <h3 class="text-lg font-semibold">Рассчитать переменные затраты по статьям</h3>
+          <button class="btn" onclick="closeVCTab()">✕</button>
+        </div>
+        <p class="muted text-sm mt-1">Складываются фикс‑суммы на 1 ед. и проценты от цены. Потом итог подставится в поле «Ввести вручную».</p>
+        <div class="overflow-x-auto">
+          <table class="tbl mt-2">
+            <thead>
+              <tr>
+                <th>Статья</th>
+                <th>Включить</th>
+                <th>Сумма на ед.</th>
+                <th>% от цены</th>
+              </tr>
+            </thead>
+            <tbody id="vcBodySingle"></tbody>
+            <tfoot>
+              <tr>
+                <td colspan="4">
+                  <button id="addRowSingle" type="button" class="btn" onclick="addVCRow()">+ Добавить строку</button>
+                  <span class="pill">Итог перем. затрат при текущей цене: <span id="vcTotalLive">—</span></span>
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+        <div class="flex gap-2 mt-3 justify-end">
+          <button class="btn" onclick="applyVCTotal()">Подставить в калькулятор</button>
+        </div>
+      </div>
+    </dialog>
+
+    <!-- KPI: маржинальность и ТБ -->
+    <section class="grid grid-cols-1 lg:grid-cols-12 gap-3">
+      <div class="lg:col-span-4 space-y-3">
+        <div class="kpi">
+          <div class="text-xs muted">Маржинальность (текущие параметры)</div>
+          <div id="marginPct" class="font-semibold text-2xl">—</div>
+        </div>
+        <div class="kpi">
+          <div class="text-xs muted">Точка безубыточности, шт (за месяц)</div>
+          <div id="beUnits" class="font-semibold text-2xl">—</div>
+        </div>
+        <div class="kpi">
+          <div class="text-xs muted">Точка безубыточности, выручка (за месяц)</div>
+          <div id="beRevenue" class="font-semibold text-2xl">—</div>
+        </div>
+      </div>
+      <div class="lg:col-span-8 card">
+        <div class="flex items-baseline justify-between">
+          <h3 class="font-semibold">График CVP: выручка и совокупные затраты</h3>
+          <p class="muted text-xs">Пурпур — зона убытков, голубой — зона прибыли. Кружок — точка безубыточности.</p>
+        </div>
+        <div class="h-80 w-full">
+          <canvas id="chart" height="320"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <!-- Опциональный блок -->
+    <section class="card">
+      <h3 class="text-lg font-semibold">Рассчитать цену под ожидаемый объём и прибыль (опциональный блок)</h3>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-2">
+        <div class="card">
+          <div class="row"><label class="text-sm">Ожидаемый объём, шт</label>
+            <input id="qExp" inputmode="numeric" class="rounded-xl border px-3 py-2" value="1000">
+          </div>
+        </div>
+        <div class="card">
+          <div class="row"><label class="text-sm">Желаемая прибыль за период</label>
+            <input id="targetProfit" inputmode="decimal" class="rounded-xl border px-3 py-2" value="0">
+          </div>
+        </div>
+        <div class="card">
+          <div class="text-sm muted">Результат:</div>
+          <div id="targetResult" class="font-semibold text-lg mt-1">—</div>
+          <div class="text-xs muted">Показывает цену (один товар) или множитель k (ассортимент) и маржинальность при этих ценах. Множитель цен k — это коэффициент, на который нужно умножить текущие цены всех SKU, чтобы достичь заданной цели прибыли при указанном объёме и текущем миксе продаж.</div>
+        </div>
+      </div>
+    </section>
+
+    <footer class="text-center text-xs muted mt-2">
+      Single → прибыль = (P − VCфикс − VC%·P)·Q − FC; Price* = (VCфикс + (FC+T)/Q)/(1−VC%). 
+      Multi → прибыль = Q·Σ(w·(P − VCфикс − VC%·P)) − FC; k* = (T + Q·Σ(w·VCфикс) + FC) / (Q·Σ(w·P·(1−VC%))).
+    </footer>
+
+  </div>
+
+  <script>
+    // ---------- Helpers
+    function num(v){ if(v==null) return 0; v=(''+v).replace(/[^0-9.,-]/g,'').replace(',', '.'); const n=Number(v); return Number.isFinite(n)?n:0; }
+    function fmtMoney(n, cur){ try { return new Intl.NumberFormat(undefined,{style:'currency',currency:cur,maximumFractionDigits:0}).format(n) } catch { return cur+' '+(n||0).toLocaleString() } }
+    function fmtNum(n){ return new Intl.NumberFormat(undefined,{maximumFractionDigits:0}).format(n) }
+
+    const el = {
+      cur: document.getElementById('cur'),
+      mode: document.getElementById('mode'),
+      fixed: document.getElementById('fixed'),
+
+      // single
+      priceSingle: document.getElementById('priceSingle'),
+      vcManual: document.getElementById('vcManual'),
+      vcTable: document.getElementById('vcTable'),
+      vcManualValue: document.getElementById('vcManualValue'),
+      vcDialog: document.getElementById('vcDialog'),
+      vcBodySingle: document.getElementById('vcBodySingle'),
+      vcTotalLive: document.getElementById('vcTotalLive'),
+
+      // multi
+      skuBody: document.getElementById('skuBody'),
+      mixShareSum: document.getElementById('mixShareSum'),
+      wAvgPrice: document.getElementById('wAvgPrice'),
+      wAvgVC: document.getElementById('wAvgVC'),
+      wAvgContr: document.getElementById('wAvgContr'),
+
+      // KPIs & optional
+      marginPct: document.getElementById('marginPct'),
+      beUnits: document.getElementById('beUnits'),
+      beRevenue: document.getElementById('beRevenue'),
+      chart: document.getElementById('chart'),
+      qExp: document.getElementById('qExp'),
+      targetProfit: document.getElementById('targetProfit'),
+      targetResult: document.getElementById('targetResult'),
+
+      singleSection: document.getElementById('singleSection'),
+      multiSection: document.getElementById('multiSection'),
+    };
+
+    // ---------- VC Articles (Single)
+    let vcRows = [
+      { name:'Сырьё / материалы', on:true,  amount:200, pct:0 },
+      { name:'Упаковка',           on:true,  amount:40,  pct:0 },
+      { name:'Бонусная часть за продажи, %', on:true, amount:0, pct:0.02 },
+      { name:'Эквайринг / платежные комиссии', on:true,  amount:0, pct:0.02 },
+      { name:'Комиссия маркетплейса',          on:false, amount:0, pct:0.10 },
+      { name:'Доставка',                       on:false, amount:80,  pct:0 },
+    ];
+    function renderVC(){
+      el.vcBodySingle.innerHTML = vcRows.map((r,i)=>`
+        <tr>
+          <td><input class="w-full border rounded-lg px-2 py-1 vc-name" value="${r.name||''}"></td>
+          <td class="text-center"><input type="checkbox" class="vc-on" ${r.on?'checked':''}></td>
+          <td><input class="w-full border rounded-lg px-2 py-1 vc-amount" inputmode="decimal" value="${r.amount||0}"></td>
+          <td><input class="w-full border rounded-lg px-2 py-1 vc-pct" inputmode="decimal" value="${r.pct||0}"></td>
+        </tr>`).join('');
+    }
+    function syncVC(){
+      vcRows = Array.from(el.vcBodySingle.querySelectorAll('tr')).map(tr=>({
+        name: tr.querySelector('.vc-name').value,
+        on: tr.querySelector('.vc-on').checked,
+        amount: num(tr.querySelector('.vc-amount').value),
+        pct: num(tr.querySelector('.vc-pct').value)
+      }));
+      recalc();
+    }
+    function openVCTab(){
+      try{
+        if(el.vcDialog.showModal){ el.vcDialog.showModal(); }
+        else { el.vcDialog.setAttribute('open',''); el.vcDialog.style.display='block'; }
+      }catch{ el.vcDialog.setAttribute('open',''); el.vcDialog.style.display='block'; }
+    }
+    function closeVCTab(){
+      try{
+        if(el.vcDialog.close){ el.vcDialog.close(); }
+        else { el.vcDialog.removeAttribute('open'); el.vcDialog.style.display='none'; }
+      }catch{ el.vcDialog.removeAttribute('open'); el.vcDialog.style.display='none'; }
+    }
+    function addVCRow(){
+      vcRows.push({name:'Своя статья', on:true, amount:0, pct:0});
+      renderVC(); recalc(); // live totals update
+    }
+    function applyVCTotal(){
+      const P = Math.max(0, num(el.priceSingle.value));
+      let fix=0, pct=0;
+      vcRows.forEach(r=>{ if(!r.on) return; fix+=Math.max(0,r.amount||0); pct+=Math.max(0,r.pct||0); });
+      if(pct>1) pct/=100;
+      const total = fix + pct*P;
+      el.vcManual.checked = true;
+      el.vcManualValue.value = String(Math.round(total));
+      closeVCTab();
+      recalc();
+    }
+    window.openVCTab = openVCTab;
+    window.closeVCTab = closeVCTab;
+    window.addVCRow = addVCRow;
+    window.applyVCTotal = applyVCTotal;
+    el.vcBodySingle.addEventListener('input', (e)=>{
+      if(e.target.matches('.vc-name,.vc-amount,.vc-pct')){ syncVC(); }
+    });
+    el.vcBodySingle.addEventListener('change', (e)=>{
+      if(e.target.matches('.vc-on')){ syncVC(); }
+    });
+
+    // ---------- Multi SKU
+    let skuRows = [
+      { name:'SKU A', price:1000, vcFix:200, vcPct:0.05, share:50 },
+      { name:'SKU B', price:1500, vcFix:300, vcPct:0.08, share:50 }
+    ];
+    function renderSKU(){
+      el.skuBody.innerHTML = skuRows.map((r,i)=>`
+      <tr>
+        <td><input class="w-full border rounded-lg px-2 py-1 sku-name" value="${r.name||''}"></td>
+        <td><input class="w-full border rounded-lg px-2 py-1 sku-price" inputmode="decimal" value="${r.price||0}"></td>
+        <td><input class="w-full border rounded-lg px-2 py-1 sku-vcFix" inputmode="decimal" value="${r.vcFix||0}"></td>
+        <td><input class="w-full border rounded-lg px-2 py-1 sku-vcPct" inputmode="decimal" value="${r.vcPct||0}"></td>
+        <td><input class="w-full border rounded-lg px-2 py-1 sku-share" inputmode="decimal" value="${r.share||0}"></td>
+        <td><button type="button" class="btn sku-del">Удалить</button></td>
+      </tr>`).join('');
+      updateMixPill();
+    }
+    function updateMixPill(){
+      const sum = skuRows.reduce((s,r)=>s+(r.share||0),0);
+      el.mixShareSum.textContent = sum.toFixed(1)+'%';
+      el.mixShareSum.parentElement.classList.toggle('pos', Math.abs(sum-100)<=0.5);
+      el.mixShareSum.parentElement.classList.toggle('neg', Math.abs(sum-100)>0.5);
+    }
+    function addSkuRow(){
+      skuRows.push({name:'Новый SKU', price:1000, vcFix:0, vcPct:0, share:0});
+      renderSKU(); recalc();
+    }
+    window.addSkuRow = addSkuRow;
+    el.skuBody.addEventListener('input', (e)=>{
+      if(e.target.matches('.sku-name,.sku-price,.sku-vcFix,.sku-vcPct,.sku-share')){
+        skuRows = Array.from(el.skuBody.querySelectorAll('tr')).map(tr=>({
+          name: tr.querySelector('.sku-name').value,
+          price: num(tr.querySelector('.sku-price').value),
+          vcFix: num(tr.querySelector('.sku-vcFix').value),
+          vcPct: num(tr.querySelector('.sku-vcPct').value),
+          share: num(tr.querySelector('.sku-share').value)
+        }));
+        updateMixPill(); recalc();
+      }
+    });
+    el.skuBody.addEventListener('click', (e)=>{
+      if(e.target.classList.contains('sku-del')){
+        const idx = Array.from(el.skuBody.children).indexOf(e.target.closest('tr'));
+        skuRows.splice(idx,1); renderSKU(); recalc();
+      }
+    });
+
+    // ---------- Mode switching
+    function setModeUI(){
+      const m = el.mode.value;
+      const single = (m==='single');
+      el.singleSection.classList.toggle('hiddenSection', !single);
+      el.multiSection.classList.toggle('hiddenSection', single);
+      recalc();
+    }
+    el.mode.addEventListener('change', setModeUI);
+
+    // ---------- Chart plugin: shade & BE dot
+    const cvpShadePlugin = {
+      id: 'cvpShade',
+      beforeDatasetsDraw(chart, args, pluginOpts){
+        const {ctx, chartArea, scales:{x,y}} = chart;
+        const be = pluginOpts.breakEvenX;
+        if(!Number.isFinite(be)) return;
+        ctx.save();
+        const leftX = x.getPixelForValue(x.min);
+        const beX   = x.getPixelForValue(be);
+        const rightX = x.getPixelForValue(x.max);
+        // Loss (left)
+        ctx.fillStyle = 'rgba(180, 83, 255, 0.15)';
+        ctx.fillRect(leftX, chartArea.top, beX-leftX, chartArea.bottom-chartArea.top);
+        // Profit (right)
+        ctx.fillStyle = 'rgba(14, 165, 233, 0.15)';
+        ctx.fillRect(beX, chartArea.top, rightX-beX, chartArea.bottom-chartArea.top);
+        ctx.restore();
+      },
+      afterDatasetsDraw(chart, args, pluginOpts){
+        const {ctx, scales:{x,y}} = chart;
+        const be = pluginOpts.breakEvenX;
+        const beY = pluginOpts.beY;
+        if(!Number.isFinite(be) || !Number.isFinite(beY)) return;
+        const xPix = x.getPixelForValue(be);
+        const yPix = y.getPixelForValue(beY);
+        // dashed vertical
+        ctx.save();
+        ctx.setLineDash([6,6]);
+        ctx.strokeStyle = 'rgba(239,68,68,0.9)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(xPix, y.getPixelForValue(y.min));
+        ctx.lineTo(xPix, y.getPixelForValue(y.max));
+        ctx.stroke();
+        // bold point
+        ctx.setLineDash([]);
+        ctx.fillStyle = 'rgb(16,185,129)';
+        ctx.beginPath();
+        ctx.arc(xPix, yPix, 5, 0, Math.PI*2);
+        ctx.fill();
+        ctx.restore();
+      }
+    };
+    Chart.register(cvpShadePlugin);
+
+    let chart;
+    function buildChart(){
+      const ctx = el.chart.getContext('2d');
+      chart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          datasets: [
+            { label:'Выручка', data: [], borderWidth:2, tension:0, pointRadius:0 },
+            { label:'Совокупные затраты', data: [], borderWidth:2, tension:0, pointRadius:0 }
+          ]
+        },
+        options: {
+          responsive:true, maintainAspectRatio:false,
+          parsing:false, // we pass {x,y} points
+          scales: {
+            x: { type:'linear', title: { display:true, text:'Продажи, шт' }, min:0 },
+            y: { title: { display:true, text:'Доход/затраты' },
+                 ticks: { callback:(v)=>fmtMoney(v, el.cur.value) } }
+          },
+          plugins: {
+            legend: { display:true },
+            cvpShade: { breakEvenX: null, beY: null }
+          }
+        }
+      });
+    }
+
+    // ---------- Core calc
+    function currentAverages(){
+      const cur = el.cur.value;
+      const FC  = Math.max(0, num(el.fixed.value));
+
+      let avgPrice=0, avgVC=0;
+      if(el.mode.value === 'single'){
+        const P = Math.max(0, num(el.priceSingle.value));
+        if(el.vcManual.checked){
+          avgPrice = P;
+          avgVC = Math.max(0, num(el.vcManualValue.value));
+        } else {
+          let fix=0, pct=0; vcRows.forEach(r=>{ if(!r.on) return; fix+=Math.max(0,r.amount||0); pct+=Math.max(0,r.pct||0); });
+          if(pct>1) pct/=100;
+          avgPrice = P;
+          avgVC = fix + pct*P;
+        }
+      } else {
+        const sumShare = skuRows.reduce((s,r)=>s+(r.share||0),0);
+        const norm = sumShare>0 ? sumShare : 100;
+        let wP=0, wVC=0;
+        skuRows.forEach(r=>{
+          const w = (r.share||0)/norm;
+          const P = Math.max(0, r.price||0);
+          let pct = Math.max(0, r.vcPct||0); if(pct>1) pct/=100;
+          const VC = Math.max(0, r.vcFix||0) + pct*P;
+          wP += w*P;
+          wVC += w*VC;
+        });
+        avgPrice = wP;
+        avgVC = wVC;
+      }
+      const contr = Math.max(0, avgPrice - avgVC);
+      const beUnits = contr>0 ? (FC / contr) : Infinity; // decimal for precise BE
+      const marginPct = avgPrice>0 ? ((avgPrice-avgVC)/avgPrice)*100 : 0;
+      return { cur, FC, avgPrice, avgVC, contr, beUnits, marginPct };
+    }
+
+    function recalc(){
+      const s = currentAverages();
+
+      // KPIs
+      el.marginPct.textContent = isFinite(s.marginPct) ? s.marginPct.toFixed(1)+'%' : '—';
+      const beUnitsInt = Number.isFinite(s.beUnits) ? Math.ceil(s.beUnits) : Infinity;
+      const beRevenue = Number.isFinite(s.beUnits) ? s.beUnits * s.avgPrice : Infinity;
+      el.beUnits.textContent = Number.isFinite(beUnitsInt) ? fmtNum(beUnitsInt) : '—';
+      el.beRevenue.textContent = Number.isFinite(beRevenue) ? fmtMoney(beRevenue, s.cur) : '—';
+
+      // Chart data (linear scale)
+      const qMaxBase = Number.isFinite(s.beUnits) ? Math.max(s.beUnits*1.6, 20) : 100;
+      const maxQ = Math.ceil(qMaxBase);
+      if(!chart){ buildChart(); }
+      chart.options.scales.x.max = maxQ;
+      chart.data.datasets[0].data = [{x:0, y:0}, {x:maxQ, y: s.avgPrice*maxQ}];
+      chart.data.datasets[1].data = [{x:0, y:s.FC}, {x:maxQ, y: s.FC + s.avgVC*maxQ}];
+      chart.options.scales.y.ticks.callback = (v)=>fmtMoney(v, s.cur);
+      chart.options.plugins.cvpShade.breakEvenX = Number.isFinite(s.beUnits) ? s.beUnits : null;
+      chart.options.plugins.cvpShade.beY = Number.isFinite(s.beUnits) ? (s.avgPrice*s.beUnits) : null;
+      chart.update();
+
+      // Optional block: target price / k
+      const Q = Math.max(0, num(el.qExp.value));
+      const T = Math.max(0, num(el.targetProfit.value));
+      if(Q>0){
+        if(el.mode.value==='single'){
+          let vcFix=0, vcPct=0;
+          if(el.vcManual.checked){
+            vcFix = Math.max(0, num(el.vcManualValue.value));
+            vcPct = 0;
+          } else {
+            vcRows.forEach(r=>{ if(!r.on) return; vcFix += Math.max(0,r.amount||0); vcPct += Math.max(0,r.pct||0); });
+            if(vcPct>1) vcPct/=100;
+          }
+          const denom = 1 - vcPct;
+          const priceForTarget = denom<=0 ? Infinity : (vcFix + (s.FC + T)/Q) / denom;
+          const marginAt = priceForTarget>0 ? ((priceForTarget - (vcFix + vcPct*priceForTarget))/priceForTarget)*100 : 0;
+          el.targetResult.textContent = Number.isFinite(priceForTarget)
+            ? `Цена: ${fmtMoney(priceForTarget, s.cur)} • Маржа: ${marginAt.toFixed(1)}%`
+            : '—';
+        } else {
+          let A=0, B=0, sumW=0;
+          const sumShare = skuRows.reduce((s,r)=>s+(r.share||0),0);
+          const norm = sumShare>0 ? sumShare : 100;
+          skuRows.forEach(r=>{
+            const w = (r.share||0)/norm; sumW+=w;
+            const P = Math.max(0, r.price||0);
+            let pct = Math.max(0, r.vcPct||0); if(pct>1) pct/=100;
+            const vcf = Math.max(0, r.vcFix||0);
+            A += w * P * (1 - pct);
+            B += w * vcf;
+          });
+          if(sumW>0){ A/=sumW; B/=sumW; }
+          const denom = Q*A;
+          const k = denom>0 ? (T + Q*B + s.FC) / denom : Infinity;
+          const avgPriceK = s.avgPrice*k;
+          const avgVCK = s.avgVC + (k-1)*s.avgPrice; // approx
+          const marginAt = avgPriceK>0 ? ((avgPriceK - avgVCK)/avgPriceK)*100 : 0;
+          el.targetResult.textContent = Number.isFinite(k)
+            ? `Множитель цен: k = ${k.toFixed(3)} • Маржа: ${marginAt.toFixed(1)}%`
+            : '—';
+        }
+      } else {
+        el.targetResult.textContent = '—';
+      }
+    }
+
+    // ---------- Bindings
+    ['input','change'].forEach(evt=>{
+      [el.cur, el.fixed, el.priceSingle, el.vcManual, el.vcTable, el.vcManualValue, el.qExp, el.targetProfit].forEach(x=>x.addEventListener(evt, recalc));
+    });
+    el.mode.addEventListener('change', setModeUI);
+
+    // Initial render
+    renderVC();
+    renderSKU();
+    buildChart();
+    setModeUI();
+    recalc();
+  </script>
+</body>
+</html>
